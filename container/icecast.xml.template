@@ -1,0 +1,76 @@
+<?xml version="1.0"?>
+<icecast>
+  <location>LAN</location>
+  <admin>local@mac-pro</admin>
+  <hostname>mac-pro</hostname>
+
+  <limits>
+    <clients>100</clients>
+    <sources>3</sources>
+    <queue-size>65536</queue-size>
+    <source-timeout>10</source-timeout>
+    <burst-size>4096</burst-size>
+  </limits>
+
+  <authentication>
+    <source-password>@SOURCE_PASSWORD@</source-password>
+    <admin-user>admin</admin-user>
+    <admin-password>@ADMIN_PASSWORD@</admin-password>
+  </authentication>
+
+  <listen-socket>
+    <port>8000</port>
+    <bind-address>0.0.0.0</bind-address>
+  </listen-socket>
+
+  <mount>
+    <mount-name>/spotify-64.opus</mount-name>
+    <username>source</username>
+    <password>@SOURCE_PASSWORD@</password>
+    <public>0</public>
+    <bitrate>64</bitrate>
+    <type>application/ogg</type>
+    <subtype>opus</subtype>
+    <burst-size>4096</burst-size>
+  </mount>
+
+  <mount>
+    <mount-name>/spotify-96.opus</mount-name>
+    <username>source</username>
+    <password>@SOURCE_PASSWORD@</password>
+    <public>0</public>
+    <bitrate>96</bitrate>
+    <type>application/ogg</type>
+    <subtype>opus</subtype>
+    <burst-size>4096</burst-size>
+  </mount>
+
+  <mount>
+    <mount-name>/spotify-128.opus</mount-name>
+    <username>source</username>
+    <password>@SOURCE_PASSWORD@</password>
+    <public>0</public>
+    <bitrate>128</bitrate>
+    <type>application/ogg</type>
+    <subtype>opus</subtype>
+    <burst-size>4096</burst-size>
+  </mount>
+
+  <paths>
+    <logdir>/data/logs</logdir>
+    <adminroot>/opt/runtime/share/icecast/admin</adminroot>
+    <webroot>/opt/runtime/share/icecast/web</webroot>
+    <alias source="/" dest="/status.xsl"/>
+  </paths>
+
+  <logging>
+    <accesslog>access.log</accesslog>
+    <errorlog>error.log</errorlog>
+    <loglevel>2</loglevel>
+    <logsize>10000</logsize>
+  </logging>
+
+  <security>
+    <chroot>0</chroot>
+  </security>
+</icecast>

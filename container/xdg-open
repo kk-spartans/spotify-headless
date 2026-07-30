@@ -1,0 +1,13 @@
+#!/opt/runtime/bin/bash
+set -euo pipefail
+
+url="${1:-}"
+if test -z "$url"; then
+  echo "xdg-open was called without a URL" >&2
+  exit 2
+fi
+
+temporary="/data/run/auth-url.txt.tmp"
+printf '%s\n' "$url" > "$temporary"
+mv "$temporary" /data/run/auth-url.txt
+echo "Spotify authorization URL captured: $url"
