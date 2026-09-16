@@ -1,4 +1,4 @@
 /data/
 /result
 /.direnv/
-__pycache__/
+/dist/

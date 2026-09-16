@@ -1,0 +1,9 @@
+{
+  "name": "spotify-headless",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts src/auth-capture.ts src/healthcheck.ts --bundle --platform=node --format=esm --outdir=dist",
+    "check": "tsc --noEmit"
+  }
+}
