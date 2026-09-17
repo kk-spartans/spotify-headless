@@ -1,7 +1,7 @@
 FROM nixos/nix:latest AS builder
 
 WORKDIR /build
-COPY flake.nix flake.lock ./
+COPY . .
 
 RUN nix --extra-experimental-features "nix-command flakes" build \
       --out-link /tmp/runtime \
@@ -27,13 +27,7 @@ COPY --from=builder /rootfs/opt/runtime /opt/runtime
 COPY --from=builder /tmp/runtime/bin/bash /bin/sh
 COPY --from=builder /rootfs/passwd /etc/passwd
 COPY --from=builder /rootfs/group /etc/group
-COPY --chmod=755 container/entrypoint.sh container/healthcheck.sh container/pulseaudio.sh container/stream.sh container/webrtc-stream.sh container/auto-login-click.sh /opt/spotify-headless/
-COPY --chmod=755 container/xdg-open /opt/spotify-headless/bin/xdg-open
-COPY --chmod=755 container/auth-server.py /opt/spotify-headless/auth-server.py
-COPY container/supervisord.conf container/icecast.xml.template container/mediamtx.yml.template container/nginx.conf /opt/spotify-headless/
-
 ENV PATH="/opt/spotify-headless/bin:/opt/runtime/bin" \
-    BROWSER="/opt/spotify-headless/bin/xdg-open" \
     DISPLAY=":99" \
     HOME="/data/home" \
     XDG_CACHE_HOME="/data/cache" \
@@ -48,6 +42,6 @@ WORKDIR /data
 EXPOSE 8080 8189/udp
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=4 \
-  CMD ["/opt/spotify-headless/healthcheck.sh"]
+  CMD ["/opt/runtime/bin/node", "/opt/runtime/share/spotify-headless/dist/healthcheck.js"]
 
-ENTRYPOINT ["/opt/spotify-headless/entrypoint.sh"]
+ENTRYPOINT ["/opt/runtime/bin/node", "/opt/runtime/share/spotify-headless/dist/main.js"]

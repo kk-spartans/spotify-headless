@@ -1,5 +1,5 @@
 {
-  description = "Headless Spicetify desktop client with noVNC and low-latency Icecast streams";
+  description = "Headless Spicetify desktop client with TypeScript-managed WebRTC and Icecast streams";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -41,20 +41,7 @@
         }).overrideAttrs {
           doCheck = false;
         };
-      minimalSpotifyFfmpeg = (pkgs.ffmpeg_4.override {
-          withHeadlessDeps = false;
-          withSmallDeps = false;
-          withFullDeps = false;
-          withSmallBuild = true;
-          buildAvcodec = true;
-          buildAvformat = true;
-          buildAvutil = true;
-          buildSwresample = true;
-        }).overrideAttrs {
-          doCheck = false;
-        };
       spotifyPackage = pkgs.spotify.override {
-        ffmpeg_4 = minimalSpotifyFfmpeg;
         zenity = pkgs.writeShellScriptBin "zenity" "exit 1";
       };
 
@@ -73,39 +60,49 @@
           }
         ];
       };
+      app = pkgs.stdenv.mkDerivation {
+        pname = "spotify-headless-app";
+        version = "0.1.0";
+        src = ./.;
+        nativeBuildInputs = [ pkgs.esbuild pkgs.nodejs pkgs.typescript ];
+        dontConfigure = true;
+        buildPhase = ''
+          tsc -p tsconfig.json --noEmit --pretty false
+          esbuild src/main.ts src/auth-capture.ts src/healthcheck.ts \
+            --bundle --platform=node --format=esm --outdir=dist
+        '';
+        installPhase = ''
+          mkdir -p $out/share/spotify-headless
+          cp -r dist $out/share/spotify-headless/
+        '';
+      };
     in
     {
       packages.${system} = {
         runtime = pkgs.buildEnv {
           name = "spotify-headless-runtime";
           paths = [
+            app
             spotifySystem.config.programs.spicetify.spicedSpotify
             pkgs.icecast
-            pkgs.novnc
+            pkgs.nodejs
             pkgs.openbox
+            pkgs.fontconfig
             pkgs.xkeyboard_config
           ] ++ map nixpkgs.lib.getBin [
             pkgs.bash
             pkgs.coreutils
-            pkgs.curl
             pkgs.dbus
             minimalFfmpeg
-            pkgs.fontconfig
-            pkgs.gnugrep
-            pkgs.gnused
             pkgs.mediamtx
-            pkgs.nginx
             pkgs.pulseaudio
-            pkgs.procps
-            pkgs.python3Packages.supervisor
-            pkgs.x11vnc
             pkgs.xdotool
             pkgs.xorg.xkbcomp
-            pkgs.xdpyinfo
             pkgs.xvfb
           ];
           pathsToLink = [
             "/bin"
+            "/etc"
             "/share"
           ];
         };

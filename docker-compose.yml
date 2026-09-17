@@ -13,7 +13,6 @@ services:
     environment:
       ICECAST_ADMIN_PASSWORD: deadbeef
       ICECAST_SOURCE_PASSWORD: feedface
-      VNC_PASSWORD: spotify
       SPOTIFY_DEVICE_NAME: spotify-headless
       AUTO_LOGIN_CLICK: "true"
       WEBRTC_ADDITIONAL_HOST: 0.0.0.0
