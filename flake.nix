@@ -22,7 +22,8 @@
         config.allowUnfree = true;
       };
       spicePkgs = spicetify-nix.legacyPackages.${system};
-      minimalFfmpeg = (pkgs.ffmpeg.override {
+      minimalFfmpeg =
+        (pkgs.ffmpeg.override {
           withHeadlessDeps = false;
           withSmallDeps = false;
           withFullDeps = false;
@@ -38,9 +39,10 @@
           buildAvformat = true;
           buildAvutil = true;
           buildSwresample = true;
-        }).overrideAttrs {
-          doCheck = false;
-        };
+        }).overrideAttrs
+          {
+            doCheck = false;
+          };
       spotifyPackage = pkgs.spotify.override {
         zenity = pkgs.writeShellScriptBin "zenity" "exit 1";
       };
@@ -60,11 +62,23 @@
           }
         ];
       };
+      appBuildTools = [
+        pkgs.esbuild
+        pkgs.nodejs
+        pkgs.typescript
+      ];
       app = pkgs.stdenv.mkDerivation {
         pname = "spotify-headless-app";
         version = "0.1.0";
-        src = ./.;
-        nativeBuildInputs = [ pkgs.esbuild pkgs.nodejs pkgs.typescript ];
+        src = nixpkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = nixpkgs.lib.fileset.unions [
+            ./src
+            ./tsconfig.json
+            ./package.json
+          ];
+        };
+        nativeBuildInputs = appBuildTools;
         dontConfigure = true;
         buildPhase = ''
           tsc -p tsconfig.json --noEmit --pretty false
@@ -79,17 +93,23 @@
     in
     {
       packages.${system} = {
-        runtime = pkgs.buildEnv {
-          name = "spotify-headless-runtime";
+        inherit app;
+        appBuildTools = pkgs.buildEnv {
+          name = "spotify-headless-build-tools";
+          paths = appBuildTools;
+          pathsToLink = [ "/bin" ];
+        };
+        runtimeDependencies = pkgs.buildEnv {
+          name = "spotify-headless-dependencies";
           paths = [
-            app
             spotifySystem.config.programs.spicetify.spicedSpotify
             pkgs.icecast
-            pkgs.nodejs
+            pkgs.nodejs-slim
             pkgs.openbox
             pkgs.fontconfig
             pkgs.xkeyboard_config
-          ] ++ map nixpkgs.lib.getBin [
+          ]
+          ++ map nixpkgs.lib.getBin [
             pkgs.bash
             pkgs.coreutils
             pkgs.dbus
@@ -99,6 +119,19 @@
             pkgs.xdotool
             pkgs.xorg.xkbcomp
             pkgs.xvfb
+          ];
+          pathsToLink = [
+            "/bin"
+            "/etc"
+            "/share"
+          ];
+        };
+
+        runtime = pkgs.buildEnv {
+          name = "spotify-headless-runtime";
+          paths = [
+            app
+            self.packages.${system}.runtimeDependencies
           ];
           pathsToLink = [
             "/bin"

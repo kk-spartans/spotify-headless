@@ -2,7 +2,10 @@ import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import type { Config } from "./config.js";
 
 function xml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 export async function prepareFiles(config: Config): Promise<void> {
@@ -17,7 +20,10 @@ export async function prepareFiles(config: Config): Promise<void> {
     mkdir(`${config.runtimeDir}/pulse`, { recursive: true }),
   ]);
 
-  await Promise.all([chmod(config.runtimeDir, 0o700), chmod("/tmp/.X11-unix", 0o1777)]);
+  await Promise.all([
+    chmod(config.runtimeDir, 0o700),
+    chmod("/tmp/.X11-unix", 0o1777),
+  ]);
   await Promise.all([
     rm(`${config.runtimeDir}/auth-url.txt`, { force: true }),
     rm(`${config.cacheDir}/spotify/SingletonCookie`, { force: true }),
@@ -31,7 +37,7 @@ export async function prepareFiles(config: Config): Promise<void> {
   const desktopFile = `[Desktop Entry]
 Type=Application
 Name=Spotify authorization URL capture
-Exec=/opt/runtime/bin/node /opt/runtime/lib/spotify-headless/dist/auth-capture.js %u
+Exec=/opt/runtime/bin/node /opt/runtime/share/spotify-headless/dist/auth-capture.js %u
 NoDisplay=true
 Terminal=false
 MimeType=x-scheme-handler/http;x-scheme-handler/https;
@@ -44,7 +50,10 @@ x-scheme-handler/https=spotify-auth-capture.desktop
 x-scheme-handler/http=spotify-auth-capture.desktop;
 x-scheme-handler/https=spotify-auth-capture.desktop;
 `;
-  await writeFile(`${config.dataHome}/applications/spotify-auth-capture.desktop`, desktopFile);
+  await writeFile(
+    `${config.dataHome}/applications/spotify-auth-capture.desktop`,
+    desktopFile,
+  );
   await writeFile(`${config.configDir}/mimeapps.list`, mimeApps);
 }
 
