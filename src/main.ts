@@ -17,9 +17,6 @@ const environment: NodeJS.ProcessEnv = {
   XDG_DATA_HOME: config.dataHome,
   XDG_RUNTIME_DIR: config.runtimeDir,
   DBUS_SESSION_BUS_ADDRESS: `unix:path=${config.runtimeDir}/dbus.sock`,
-  // The image ships no desktop browser: this shim captures the login URL
-  // to a file instead of opening it. Spotify finds it via PATH/BROWSER.
-  BROWSER: process.env.BROWSER ?? "/opt/spotify-headless/bin/xdg-open",
   PULSE_SERVER: `unix:${config.runtimeDir}/pulse/native`,
   PULSE_SINK: "spotify_stream",
   XKB_CONFIG_ROOT: "/opt/runtime/share/X11/xkb",
