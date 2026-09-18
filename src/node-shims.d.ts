@@ -6,10 +6,12 @@ declare const process: {
   stderr: { write(value: unknown): void };
   exitCode?: number;
   once(event: string, listener: (...args: any[]) => void): void;
+  kill(pid: number, signal?: string | number): void;
 };
 
 declare const Buffer: {
   from(value: unknown): any;
+  alloc(size: number): any;
   concat(values: any[]): any;
 };
 type Buffer = any;

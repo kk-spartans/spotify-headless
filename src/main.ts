@@ -1,5 +1,6 @@
 import { chown, lstat, mkdir, readdir } from "node:fs/promises";
 import { loadConfig } from "./config.js";
+import { authUrlPath } from "./config.js";
 import { prepareFiles, writeMediaMtxConfig, writePulseConfig } from "./config-files.js";
 import { IcecastManager } from "./icecast.js";
 import { clickLogin } from "./login.js";
@@ -69,9 +70,19 @@ async function start(): Promise<void> {
   await waitForPort("127.0.0.1", 8080);
   ready = true;
 
-  if (config.autoLoginClick && !await fileExists(`${config.configDir}/spotify/prefs`)) {
+  // A delivered callback means a live session: never auto-click (or reset)
+  // over it. The prefs check is kept for older installs.
+  const loggedIn =
+    (await fileExists(`${config.runtimeDir}/logged-in`)) ||
+    (await fileExists(`${config.configDir}/spotify/prefs`));
+  if (config.autoLoginClick && !loggedIn) {
     await sleep(5000);
-    clickLogin(childEnvironment).catch((error) => console.error(`[login] ${error.message}`));
+    clickLogin({
+      environment: childEnvironment,
+      capturePath: authUrlPath(config),
+      cacheDir: config.cacheDir,
+      reset: false,
+    }).catch((error) => console.error(`[login] ${error.message}`));
   }
 
   const shutdown = async () => {

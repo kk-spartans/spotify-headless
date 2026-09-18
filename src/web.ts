@@ -6,7 +6,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { connect as connectSocket } from "node:net";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import type { Config } from "./config.js";
 import { authUrlPath } from "./config.js";
 import { IcecastManager } from "./icecast.js";
@@ -21,7 +21,7 @@ type RuntimeApi = {
 
 function rootPage(): string {
   const authSection = `<section id="auth-section" hidden>
-        <p class="message" id="auth-status">Spotify login URL captured. It should have opened automatically — if not, use the link below.</p>
+        <p class="message" id="auth-status">Spotify login URL captured. Open it in a new tab to finish logging in, then paste the callback URL below.</p>
         <textarea id="auth-url" readonly aria-label="Captured Spotify authorization URL" spellcheck="false"></textarea>
         <a class="link" id="open-auth" target="_blank" rel="noopener noreferrer">Open Spotify login in a new tab</a>
       </section>
@@ -75,18 +75,10 @@ login.addEventListener('click', async () => {
   callback.form.hidden = true;
   callback.value = '';
   showMessage('');
-  // Opened synchronously on click so popup blockers allow it; left empty
-  // until the Spotify URL is captured, then navigated automatically.
-  let authTab;
-  let navigated = false;
+  // No popups or auto-redirects: the captured URL is shown as a plain link
+  // below, which the user opens themselves. Popup blockers can't break this.
   try {
-    authTab = window.open('about:blank', '_blank');
-    if (authTab) authTab.opener = null;
-  } catch {
-    authTab?.close();
-    authTab = null;
-  }
-  try {
+    showMessage('Clicking Log in inside Spotify — waiting for the authorization URL…');
     const attempt = await requestJson('/api/login', { method: 'POST' }, 90000);
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
@@ -98,19 +90,7 @@ login.addEventListener('click', async () => {
         openAuth.href = url.href;
         authSection.hidden = false;
         callback.form.hidden = false;
-        if (authTab && !authTab.closed) {
-          try {
-            authTab.location.replace(url.href);
-            navigated = true;
-          } catch {
-            navigated = false;
-          }
-        }
-        if (!navigated) {
-          showMessage('Automatic redirect was blocked. Use the link above to open Spotify login, then paste the callback URL below.', true);
-        } else {
-          showMessage('Spotify login opened in a new tab. Finish logging in there, then paste the callback URL below.');
-        }
+        showMessage('Login URL captured. Open the link above to finish logging in to Spotify, then paste the callback URL below.');
         return;
       }
       await new Promise(resolve => setTimeout(resolve, 750));
@@ -119,7 +99,6 @@ login.addEventListener('click', async () => {
   } catch (error) {
     showMessage(error.message, true);
   } finally {
-    if (!navigated && authTab && !authTab.closed) authTab.close();
     login.disabled = false;
   }
 });
@@ -152,7 +131,58 @@ callback.form.addEventListener('submit', async event => {
     login.disabled = false;
   }
 });
+(async () => {
+  // A previous attempt (e.g. the boot click) may already have captured a
+  // URL. Show it immediately instead of demanding another click.
+  try {
+    const data = await requestJson('/api/url', {}, 10000);
+    if (!data.url) return;
+    const url = new URL(data.url);
+    if (url.protocol !== 'https:' || url.hostname !== 'accounts.spotify.com' || url.port || url.username || url.password) return;
+    authUrl.value = url.href;
+    openAuth.href = url.href;
+    authSection.hidden = false;
+    callback.form.hidden = false;
+    showMessage('A captured login URL is already waiting. Open the link above to finish logging in, then paste the callback URL below.');
+  } catch {
+    // No URL captured yet; the user starts with Click Log in.
+  }
+})();
 </script></body></html>`;
+}
+
+function markerPath(config: Config): string {
+  return `${config.runtimeDir}/logged-in`;
+}
+
+async function markerExists(config: Config): Promise<boolean> {
+  try {
+    await readFile(markerPath(config), "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function capturedUrl(config: Config): Promise<string | null> {
+  let value = "";
+  try {
+    value = (await readFile(authUrlPath(config), "utf8")).trim();
+  } catch (error) {
+    if ((error as { code?: string }).code !== "ENOENT") throw error;
+    return null;
+  }
+  if (!value) return null;
+  const captured = new URL(value);
+  if (
+    captured.protocol !== "https:" ||
+    captured.hostname !== "accounts.spotify.com" ||
+    captured.port ||
+    captured.username ||
+    captured.password
+  )
+    throw new Error("Invalid captured URL");
+  return captured.href;
 }
 
 function sendJson(
@@ -282,6 +312,10 @@ export function createWebServer(api: RuntimeApi): Server {
   let loginId = 0;
   let clicking = false;
   let captureExpires = 0;
+  // Set when an attempt finishes without a URL on disk: the client is
+  // probably parked on the post-click waiting screen, so the next attempt
+  // resets it to a pristine first-run screen before clicking.
+  let needsReset = false;
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname === "/" && request.method === "GET") {
@@ -304,18 +338,34 @@ export function createWebServer(api: RuntimeApi): Server {
         });
         return;
       }
+      if (await markerExists(api.config)) {
+        sendJson(response, 409, {
+          error:
+            "Spotify already logged in here. If it really is not, delete the logged-in marker from the data volume and try again.",
+        });
+        return;
+      }
       clicking = true;
       captureExpires = 0;
       loginId += 1;
       try {
-        await rm(authUrlPath(api.config), { force: true });
-        await clickLogin(api.environment);
+        // No rm: a previously captured (unused) URL stays valid and usable.
+        const fired = await clickLogin({
+          environment: api.environment,
+          capturePath: authUrlPath(api.config),
+          cacheDir: api.config.cacheDir,
+          reset: needsReset,
+        });
+        needsReset = !fired && (await capturedUrl(api.config)) === null;
         captureExpires = Date.now() + 70000;
         sendJson(response, 200, { id: loginId });
-      } catch {
+      } catch (error) {
+        needsReset = true;
         sendJson(response, 503, {
           error:
-            "Could not click Spotify Log in. Check that the Spotify window is available, then try again.",
+            error instanceof Error && /login screen/.test(error.message)
+              ? error.message
+              : "Could not click Spotify Log in. Check that the Spotify window is available, then try again.",
         });
       } finally {
         clicking = false;
@@ -335,30 +385,31 @@ export function createWebServer(api: RuntimeApi): Server {
         return;
       }
       try {
-        let value = "";
-        try {
-          value = (await readFile(authUrlPath(api.config), "utf8")).trim();
-        } catch (error) {
-          if ((error as { code?: string }).code !== "ENOENT") throw error;
-        }
-        if (!value) {
+        const href = await capturedUrl(api.config);
+        if (!href) {
           sendJson(response, 202, { pending: true });
           return;
         }
-        const captured = new URL(value);
-        if (
-          captured.protocol !== "https:" ||
-          captured.hostname !== "accounts.spotify.com" ||
-          captured.port ||
-          captured.username ||
-          captured.password
-        )
-          throw new Error();
-        sendJson(response, 200, { url: captured.href });
+        sendJson(response, 200, { url: href });
       } catch {
         sendJson(response, 503, {
           error:
             "Could not read a valid Spotify authorization URL. Click Log in again.",
+        });
+      }
+      return;
+    }
+    if (url.pathname === "/api/url" && request.method === "GET") {
+      try {
+        const href = await capturedUrl(api.config);
+        if (!href) {
+          sendJson(response, 404, { pending: true });
+          return;
+        }
+        sendJson(response, 200, { url: href });
+      } catch {
+        sendJson(response, 503, {
+          error: "Could not read a valid Spotify authorization URL.",
         });
       }
       return;
@@ -380,7 +431,11 @@ export function createWebServer(api: RuntimeApi): Server {
       try {
         await deliverCallback(callback);
         captureExpires = 0;
+        needsReset = false;
         await rm(authUrlPath(api.config), { force: true }).catch(
+          () => undefined,
+        );
+        await writeFile(markerPath(api.config), `${new Date().toISOString()}\n`).catch(
           () => undefined,
         );
         sendJson(response, 200, {
