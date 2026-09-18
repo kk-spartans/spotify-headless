@@ -22,8 +22,7 @@ type RuntimeApi = {
 function rootPage(): string {
   const authSection = `<section id="auth-section" hidden>
         <p class="message" id="auth-status">Spotify login URL captured. Open it in a new tab to finish logging in, then paste the callback URL below.</p>
-        <textarea id="auth-url" readonly aria-label="Captured Spotify authorization URL" spellcheck="false"></textarea>
-        <a class="link" id="open-auth" target="_blank" rel="noopener noreferrer">Open Spotify login in a new tab</a>
+        <a class="link" id="open-auth" target="_blank" rel="noopener noreferrer">Log in to Spotify</a>
       </section>
       <form id="callback-form" hidden>
         <label for="callback">Spotify callback URL</label>
@@ -42,7 +41,6 @@ function rootPage(): string {
 const message = document.querySelector('#callback-message');
 const login = document.querySelector('#login');
 const authSection = document.querySelector('#auth-section');
-const authUrl = document.querySelector('#auth-url');
 const openAuth = document.querySelector('#open-auth');
 const callback = document.querySelector('#callback');
 const sendCallback = document.querySelector('#send-callback');
@@ -70,7 +68,6 @@ login.addEventListener('click', async () => {
   if (login.disabled) return;
   login.disabled = true;
   authSection.hidden = true;
-  authUrl.value = '';
   openAuth.removeAttribute('href');
   callback.form.hidden = true;
   callback.value = '';
@@ -86,7 +83,6 @@ login.addEventListener('click', async () => {
       if (data.url) {
         const url = new URL(data.url);
         if (url.protocol !== 'https:' || url.hostname !== 'accounts.spotify.com' || url.port || url.username || url.password) throw new Error('Spotify returned an invalid authorization URL. Try logging in again.');
-        authUrl.value = url.href;
         openAuth.href = url.href;
         authSection.hidden = false;
         callback.form.hidden = false;
@@ -121,7 +117,6 @@ callback.form.addEventListener('submit', async event => {
     const data = await requestJson('/api/callback', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: value }) }, 15000);
     callback.value = '';
     authSection.hidden = true;
-    authUrl.value = '';
     openAuth.removeAttribute('href');
     showMessage(data.message);
   } catch (error) {
@@ -139,7 +134,6 @@ callback.form.addEventListener('submit', async event => {
     if (!data.url) return;
     const url = new URL(data.url);
     if (url.protocol !== 'https:' || url.hostname !== 'accounts.spotify.com' || url.port || url.username || url.password) return;
-    authUrl.value = url.href;
     openAuth.href = url.href;
     authSection.hidden = false;
     callback.form.hidden = false;
