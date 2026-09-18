@@ -21,6 +21,7 @@ docker compose up -d
 - open <http://localhost:8080/>
 - click **Click Log in** if Spotify needs another login attempt
 - open the captured authorization URL, finish Spotify login, and paste the localhost callback into the same page
+- if the page insists Spotify is already logged in but it is not, delete `run/logged-in` in the data volume and try again
 - the device should show up in your spotify
 
 | Format | URL | Intended use |
