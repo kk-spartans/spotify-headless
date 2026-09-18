@@ -21,7 +21,7 @@ type RuntimeApi = {
 
 function rootPage(): string {
   const authSection = `<section id="auth-section" hidden>
-        <p class="message" id="auth-status">Spotify login URL captured. It should have opened automatically — if not, use the link below.</p>
+        <p class="message" id="auth-status">Spotify login URL captured. Open it in a new tab to finish logging in, then paste the callback URL below.</p>
         <textarea id="auth-url" readonly aria-label="Captured Spotify authorization URL" spellcheck="false"></textarea>
         <a class="link" id="open-auth" target="_blank" rel="noopener noreferrer">Open Spotify login in a new tab</a>
       </section>
@@ -75,28 +75,10 @@ login.addEventListener('click', async () => {
   callback.form.hidden = true;
   callback.value = '';
   showMessage('');
-  // Opened synchronously on click so popup blockers allow it; shows a
-  // waiting message until the Spotify URL is captured, then navigated
-  // automatically. Never left as a dead blank page.
-  let authTab;
-  let navigated = false;
+  // No popups or auto-redirects: the captured URL is shown as a plain link
+  // below, which the user opens themselves. Popup blockers can't break this.
   try {
-    authTab = window.open('about:blank', '_blank');
-    if (authTab) {
-      authTab.opener = null;
-      try {
-        authTab.document.title = 'Waiting for Spotify login';
-        authTab.document.body.innerHTML = '<p style="font:16px system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem">Waiting for the Spotify authorization URL. Keep this tab and the Spotify Headless tab open — Spotify login will load here automatically.</p>';
-      } catch {
-        // Same-origin write can fail in some browsers; the tab reference
-        // is still valid and can be navigated once the URL is captured.
-      }
-    }
-  } catch {
-    authTab?.close();
-    authTab = null;
-  }
-  try {
+    showMessage('Clicking Log in inside Spotify — waiting for the authorization URL…');
     const attempt = await requestJson('/api/login', { method: 'POST' }, 90000);
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
@@ -108,19 +90,7 @@ login.addEventListener('click', async () => {
         openAuth.href = url.href;
         authSection.hidden = false;
         callback.form.hidden = false;
-        if (authTab && !authTab.closed) {
-          try {
-            authTab.location.replace(url.href);
-            navigated = true;
-          } catch {
-            navigated = false;
-          }
-        }
-        if (!navigated) {
-          showMessage('Automatic redirect was blocked. Use the link above to open Spotify login, then paste the callback URL below.', true);
-        } else {
-          showMessage('Spotify login opened in a new tab. Finish logging in there, then paste the callback URL below.');
-        }
+        showMessage('Login URL captured. Open the link above to finish logging in to Spotify, then paste the callback URL below.');
         return;
       }
       await new Promise(resolve => setTimeout(resolve, 750));
@@ -129,7 +99,6 @@ login.addEventListener('click', async () => {
   } catch (error) {
     showMessage(error.message, true);
   } finally {
-    if (!navigated && authTab && !authTab.closed) authTab.close();
     login.disabled = false;
   }
 });
