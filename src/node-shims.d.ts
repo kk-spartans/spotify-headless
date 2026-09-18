@@ -11,6 +11,7 @@ declare const process: {
 
 declare const Buffer: {
   from(value: unknown): any;
+  alloc(size: number): any;
   concat(values: any[]): any;
 };
 type Buffer = any;

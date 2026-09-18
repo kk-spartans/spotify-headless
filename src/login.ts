@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import { sleep } from "./process.js";
+import { sampleAverage } from "./x11.js";
 
 const run = promisify(execFile);
 
@@ -135,6 +136,24 @@ export async function clickLogin(options: ClickOptions): Promise<boolean> {
     uid: 1000,
     gid: 1000,
   });
+  // A failed login attempt leaves a red error banner that swallows clicks.
+  // Spot its background color and dismiss it via its corner X first.
+  const banner = await sampleAverage(
+    environment.DISPLAY,
+    Number(windowId),
+    80,
+    100,
+    8,
+    8,
+  );
+  if (banner && banner.r > 200 && banner.g < 100 && banner.b < 100) {
+    await run(
+      "xdotool",
+      ["mousemove", "--window", windowId, "800", "115", "click", "1"],
+      { env: environment, uid: 1000, gid: 1000 },
+    );
+    await sleep(2000);
+  }
   await sleep(5000);
   await run(
     "xdotool",
