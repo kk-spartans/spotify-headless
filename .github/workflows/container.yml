@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+    types: [opened, synchronize, reopened]
   schedule:
     - cron: "0 0 1 * *"
   workflow_dispatch:
@@ -100,25 +101,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Get PR image tags
+        id: tags
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "short=${HEAD_SHA:0:6}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push PR image
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/kk-spartans/spotify-headless:pr-${{ github.event.pull_request.number }}
+          tags: |
+            ghcr.io/kk-spartans/spotify-headless:pr-${{ github.event.pull_request.number }}
+            ghcr.io/kk-spartans/spotify-headless:pr-${{ github.event.pull_request.number }}-${{ steps.tags.outputs.short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Comment image tag on PR
         uses: actions/github-script@v7
+        env:
+          PR_SHORT: ${{ steps.tags.outputs.short }}
         with:
           script: |
             const marker = '<!-- pr-image -->';
             const number = context.payload.pull_request.number;
-            const image = `ghcr.io/kk-spartans/spotify-headless:pr-${number}`;
+            const short = process.env.PR_SHORT;
+            const floating = `ghcr.io/kk-spartans/spotify-headless:pr-${number}`;
+            const pinned = `${floating}-${short}`;
             const sha = context.payload.pull_request.head.sha.slice(0, 7);
-            const body = `${marker}\n### PR image ready\n\nBuilt from \`${sha}\`:\n\n\`\`\`\ndocker pull ${image}\n\`\`\`\n\nImage: \`${image}\``;
+            const body = `${marker}\n### PR image ready\n\nBuilt from \`${sha}\`:\n\n- latest commit: \`${floating}\` (\`docker pull ${floating}\`)\n- this commit: \`${pinned}\` (\`docker pull ${pinned}\`)`;
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo,
               issue_number: number,
