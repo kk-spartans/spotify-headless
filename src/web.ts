@@ -75,13 +75,23 @@ login.addEventListener('click', async () => {
   callback.form.hidden = true;
   callback.value = '';
   showMessage('');
-  // Opened synchronously on click so popup blockers allow it; left empty
-  // until the Spotify URL is captured, then navigated automatically.
+  // Opened synchronously on click so popup blockers allow it; shows a
+  // waiting message until the Spotify URL is captured, then navigated
+  // automatically. Never left as a dead blank page.
   let authTab;
   let navigated = false;
   try {
     authTab = window.open('about:blank', '_blank');
-    if (authTab) authTab.opener = null;
+    if (authTab) {
+      authTab.opener = null;
+      try {
+        authTab.document.title = 'Waiting for Spotify login';
+        authTab.document.body.innerHTML = '<p style="font:16px system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem">Waiting for the Spotify authorization URL. Keep this tab and the Spotify Headless tab open — Spotify login will load here automatically.</p>';
+      } catch {
+        // Same-origin write can fail in some browsers; the tab reference
+        // is still valid and can be navigated once the URL is captured.
+      }
+    }
   } catch {
     authTab?.close();
     authTab = null;

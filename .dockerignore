@@ -4,5 +4,7 @@
 !flake.lock
 !src/
 !src/**
+!container/
+!container/**
 !tsconfig.json
 !package.json

@@ -43,6 +43,7 @@ COPY --from=dependencies /rootfs/bin/ /bin/
 COPY --from=dependencies /rootfs/passwd /etc/passwd
 COPY --from=dependencies /rootfs/group /etc/group
 ENV PATH="/opt/spotify-headless/bin:/opt/runtime/bin" \
+    BROWSER="/opt/spotify-headless/bin/xdg-open" \
     DISPLAY=":99" \
     HOME="/data/home" \
     XDG_CACHE_HOME="/data/cache" \
@@ -62,4 +63,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=4 \
   CMD ["/opt/runtime/bin/node", "/opt/runtime/share/spotify-headless/dist/healthcheck.js"]
 
 COPY --from=builder /app/ /opt/runtime/share/spotify-headless/
+# URL capture shim (named xdg-open so the Spotify client finds it on PATH).
+COPY --chmod=755 container/xdg-open /opt/spotify-headless/bin/xdg-open
 ENTRYPOINT ["/opt/runtime/bin/node", "/opt/runtime/share/spotify-headless/dist/main.js"]
