@@ -20,13 +20,7 @@ type RuntimeApi = {
 };
 
 function rootPage(): string {
-  const authSection = `<section id="auth-section" hidden>
-        <p class="message" id="auth-status">Spotify login URL captured. It should have opened automatically — if not, use the link below.</p>
-        <textarea id="auth-url" readonly aria-label="Captured Spotify authorization URL" spellcheck="false"></textarea>
-        <a class="link" id="open-auth" target="_blank" rel="noopener noreferrer">Open Spotify login in a new tab</a>
-      </section>
-      <form id="callback-form" hidden>
-        <label for="callback">Spotify callback URL</label>
+  const callbackSection = `<form id="callback-form" hidden>
         <textarea id="callback" name="callback" required placeholder="http://127.0.0.1:4381/login?..." spellcheck="false" autocomplete="off" aria-label="Spotify callback URL"></textarea>
         <button class="secondary" type="submit" id="send-callback">Send callback</button>
       </form>
@@ -34,15 +28,13 @@ function rootPage(): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Spotify Headless</title><style>
-:root{color-scheme:dark;--ink:#f4f7f5;--muted:#a6b4ae;--surface:#13211c;--surface-2:#1b2d26;--line:#2c463a;--accent:#b7f36b;--accent-ink:#10200f;--danger:#ff8e8e}
+:root{color-scheme:dark;--ink:#f4f7f5;--surface:#13211c;--surface-2:#1b2d26;--line:#2c463a;--accent:#b7f36b;--accent-ink:#10200f;--danger:#ff8e8e}
 *{box-sizing:border-box}body{margin:0;background:#0d1512;color:var(--ink);font:16px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{min-height:100svh;display:grid;place-items:center;padding:28px 18px;background:radial-gradient(circle at 80% 10%,#234532 0,transparent 35%),#0d1512}.shell{width:min(100%,620px)}.primary,.secondary,.link{border:0;border-radius:999px;font:inherit;font-weight:700;cursor:pointer;transition:transform 180ms ease,background 180ms ease,box-shadow 180ms ease}.primary{display:block;width:100%;padding:14px 20px;background:var(--accent);color:var(--accent-ink);box-shadow:0 10px 30px #b7f36b22}.secondary{padding:11px 16px;background:var(--surface-2);color:var(--ink);border:1px solid var(--line)}.link{display:inline-flex;padding:11px 2px;background:transparent;color:var(--accent);text-decoration:none}.primary:hover,.secondary:hover,.link:hover{transform:translateY(-2px)}.primary:focus-visible,.secondary:focus-visible,.link:focus-visible,textarea:focus-visible{outline:3px solid #fff;outline-offset:3px}.primary:disabled{cursor:wait;opacity:.65;transform:none}.message{margin:14px 0 0;color:var(--muted)}#callback-message:empty{display:none}textarea{display:block;width:100%;min-height:78px;margin:0 0 18px;padding:12px;border:1px solid var(--line);border-radius:12px;background:#0a100e;color:var(--ink);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
 [hidden]{display:none!important}.secondary:disabled{cursor:wait;opacity:.65;transform:none}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important}}
-</style></head><body><main><div class="shell"><button class="primary" type="button" id="login">Click Log in</button>${authSection}</div></main><script>
+</style></head><body><main><div class="shell"><button class="primary" type="button" id="login">Click Log in</button><a class="link" id="open-auth" target="_blank" rel="noopener noreferrer" hidden>Open Spotify login in a new tab</a>${callbackSection}</div></main><script>
 const message = document.querySelector('#callback-message');
 const login = document.querySelector('#login');
-const authSection = document.querySelector('#auth-section');
-const authUrl = document.querySelector('#auth-url');
 const openAuth = document.querySelector('#open-auth');
 const callback = document.querySelector('#callback');
 const sendCallback = document.querySelector('#send-callback');
@@ -69,19 +61,20 @@ async function requestJson(path, options = {}, timeout = 10000) {
 login.addEventListener('click', async () => {
   if (login.disabled) return;
   login.disabled = true;
-  authSection.hidden = true;
-  authUrl.value = '';
+  openAuth.hidden = true;
   openAuth.removeAttribute('href');
   callback.form.hidden = true;
   callback.value = '';
   showMessage('');
-  // Opened synchronously on click so popup blockers allow it; left empty
-  // until the Spotify URL is captured, then navigated automatically.
   let authTab;
   let navigated = false;
   try {
     authTab = window.open('about:blank', '_blank');
-    if (authTab) authTab.opener = null;
+    if (authTab) {
+      authTab.opener = null;
+      authTab.document.title = 'Waiting for Spotify login';
+      authTab.document.body.textContent = 'Waiting for Spotify authorization. Keep the Spotify Headless tab open.';
+    }
   } catch {
     authTab?.close();
     authTab = null;
@@ -94,22 +87,19 @@ login.addEventListener('click', async () => {
       if (data.url) {
         const url = new URL(data.url);
         if (url.protocol !== 'https:' || url.hostname !== 'accounts.spotify.com' || url.port || url.username || url.password) throw new Error('Spotify returned an invalid authorization URL. Try logging in again.');
-        authUrl.value = url.href;
         openAuth.href = url.href;
-        authSection.hidden = false;
         callback.form.hidden = false;
         if (authTab && !authTab.closed) {
           try {
             authTab.location.replace(url.href);
             navigated = true;
           } catch {
-            navigated = false;
+            authTab.close();
           }
         }
         if (!navigated) {
-          showMessage('Automatic redirect was blocked. Use the link above to open Spotify login, then paste the callback URL below.', true);
-        } else {
-          showMessage('Spotify login opened in a new tab. Finish logging in there, then paste the callback URL below.');
+          openAuth.hidden = false;
+          showMessage('The login tab was blocked or closed. Use the link above to open Spotify login, then paste the callback URL below.', true);
         }
         return;
       }
@@ -141,8 +131,7 @@ callback.form.addEventListener('submit', async event => {
   try {
     const data = await requestJson('/api/callback', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: value }) }, 15000);
     callback.value = '';
-    authSection.hidden = true;
-    authUrl.value = '';
+    openAuth.hidden = true;
     openAuth.removeAttribute('href');
     showMessage(data.message);
   } catch (error) {
