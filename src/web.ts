@@ -128,19 +128,25 @@ callback.form.addEventListener('submit', async event => {
 });
 (async () => {
   // A previous attempt (e.g. the boot click) may already have captured a
-  // URL. Show it immediately instead of demanding another click.
-  try {
-    const data = await requestJson('/api/url', {}, 10000);
-    if (!data.url) return;
-    const url = new URL(data.url);
-    if (url.protocol !== 'https:' || url.hostname !== 'accounts.spotify.com' || url.port || url.username || url.password) return;
-    openAuth.href = url.href;
-    authSection.hidden = false;
-    callback.form.hidden = false;
-    showMessage('A captured login URL is already waiting. Open the link above to finish logging in, then paste the callback URL below.');
-  } catch {
-    // No URL captured yet; the user starts with Click Log in.
+  // URL, or one may land after this page loads. Poll in the background so
+  // the link appears without a manual refresh.
+  async function refreshUrl() {
+    if (openAuth.hasAttribute('href')) return;
+    try {
+      const data = await requestJson('/api/url', {}, 10000);
+      if (!data.url) return;
+      const url = new URL(data.url);
+      if (url.protocol !== 'https:' || url.hostname !== 'accounts.spotify.com' || url.port || url.username || url.password) return;
+      openAuth.href = url.href;
+      authSection.hidden = false;
+      callback.form.hidden = false;
+      showMessage('A captured login URL is already waiting. Open the link above to finish logging in, then paste the callback URL below.');
+    } catch {
+      // No URL captured yet; the user starts with Click Log in.
+    }
   }
+  await refreshUrl();
+  setInterval(refreshUrl, 4000);
 })();
 </script></body></html>`;
 }
@@ -156,6 +162,19 @@ async function markerExists(config: Config): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Best-effort marker healing. The marker is only a hint: the Spotify window
+// geometry (checked by clickLogin) is authoritative. A stale marker must
+// never block a re-login after Spotify drops the session on its own.
+async function clearMarker(config: Config): Promise<void> {
+  await rm(markerPath(config), { force: true }).catch(() => undefined);
+}
+
+async function writeMarker(config: Config): Promise<void> {
+  await writeFile(markerPath(config), `${new Date().toISOString()}\n`).catch(
+    () => undefined,
+  );
 }
 
 async function capturedUrl(config: Config): Promise<string | null> {
@@ -332,13 +351,12 @@ export function createWebServer(api: RuntimeApi): Server {
         });
         return;
       }
-      if (await markerExists(api.config)) {
-        sendJson(response, 409, {
-          error:
-            "Spotify already logged in here. If it really is not, delete the logged-in marker from the data volume and try again.",
-        });
-        return;
-      }
+      // No marker gate here on purpose: the marker goes stale when Spotify
+      // logs itself out, and clickLogin's window-geometry check is the
+      // authoritative "already logged in" signal. A reset wipes the client's
+      // session state, so it is only allowed when no marker claims a live
+      // session; a stale marker is cleared below once the login screen (or a
+      // fresh capture) proves we are logged out.
       clicking = true;
       captureExpires = 0;
       loginId += 1;
@@ -348,19 +366,39 @@ export function createWebServer(api: RuntimeApi): Server {
           environment: api.environment,
           capturePath: authUrlPath(api.config),
           cacheDir: api.config.cacheDir,
-          reset: needsReset,
+          reset: needsReset && !(await markerExists(api.config)),
         });
-        needsReset = !fired && (await capturedUrl(api.config)) === null;
+        let href: string | null = null;
+        try {
+          href = await capturedUrl(api.config);
+        } catch {
+          href = null;
+        }
+        if (href || !fired) {
+          // clickLogin returned, so the login screen was visible (it throws
+          // otherwise): any marker claiming a live session is stale.
+          await clearMarker(api.config);
+        }
+        needsReset = !fired && href === null;
         captureExpires = Date.now() + 70000;
         sendJson(response, 200, { id: loginId });
       } catch (error) {
-        needsReset = true;
-        sendJson(response, 503, {
-          error:
-            error instanceof Error && /login screen/.test(error.message)
-              ? error.message
-              : "Could not click Spotify Log in. Check that the Spotify window is available, then try again.",
-        });
+        if (error instanceof Error && /login screen/.test(error.message)) {
+          // Geometry check says no login screen is showing: this is the only
+          // trustworthy "already logged in" signal. Heal a missing marker so
+          // boot stays consistent.
+          await writeMarker(api.config);
+          sendJson(response, 409, {
+            error:
+              "Spotify is already logged in here. If playback is not working, restart the container and try again.",
+          });
+        } else {
+          needsReset = true;
+          sendJson(response, 503, {
+            error:
+              "Could not click Spotify Log in. Check that the Spotify window is available, then try again.",
+          });
+        }
       } finally {
         clicking = false;
       }

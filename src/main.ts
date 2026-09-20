@@ -1,4 +1,4 @@
-import { chown, lstat, mkdir, readdir } from "node:fs/promises";
+import { chown, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { loadConfig } from "./config.js";
 import { authUrlPath } from "./config.js";
 import { prepareFiles, writeMediaMtxConfig, writePulseConfig } from "./config-files.js";
@@ -70,19 +70,33 @@ async function start(): Promise<void> {
   await waitForPort("127.0.0.1", 8080);
   ready = true;
 
-  // A delivered callback means a live session: never auto-click (or reset)
-  // over it. The prefs check is kept for older installs.
-  const loggedIn =
-    (await fileExists(`${config.runtimeDir}/logged-in`)) ||
-    (await fileExists(`${config.configDir}/spotify/prefs`));
-  if (config.autoLoginClick && !loggedIn) {
+  // The marker/prefs files go stale when Spotify logs itself out, so they
+  // cannot gate the boot click. clickLogin's window-geometry check is the
+  // authoritative signal: it throws (harmlessly, before clicking anything)
+  // when no login screen is showing, and returns when one is. The marker is
+  // healed to match either outcome.
+  if (config.autoLoginClick) {
     await sleep(5000);
-    clickLogin({
-      environment: childEnvironment,
-      capturePath: authUrlPath(config),
-      cacheDir: config.cacheDir,
-      reset: false,
-    }).catch((error) => console.error(`[login] ${error.message}`));
+    try {
+      await clickLogin({
+        environment: childEnvironment,
+        capturePath: authUrlPath(config),
+        cacheDir: config.cacheDir,
+        reset: false,
+      });
+      await rm(`${config.runtimeDir}/logged-in`, { force: true });
+    } catch (error) {
+      if (error instanceof Error && /login screen/.test(error.message)) {
+        await writeFile(
+          `${config.runtimeDir}/logged-in`,
+          `${new Date().toISOString()}\n`,
+        ).catch(() => undefined);
+      } else {
+        console.error(
+          `[login] ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
   }
 
   const shutdown = async () => {
