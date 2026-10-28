@@ -1,4 +1,4 @@
-import { request, type ClientRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import { request, type IncomingMessage, type ServerResponse } from "node:http";
 import { chown, unlink } from "node:fs/promises";
 import type { Config } from "./config.js";
 import { clampBitrate } from "./config.js";
@@ -12,6 +12,18 @@ type StreamState = {
   idleTimer?: NodeJS.Timeout;
 };
 
+// Headers are ours, not icecast's: forwarding handshake headers such as
+// Connection/Transfer-Encoding makes Node emit a second, conflicting set.
+const MOUNT_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate",
+  Pragma: "no-cache",
+  Expires: "0",
+  Connection: "close",
+  "Icy-Name": "Spotify Headless",
+  "Icy-Pub": "0",
+  "Icy-MetaData": "0",
+};
+
 export class IcecastManager {
   private server?: ManagedProcess;
   private readonly streams = new Map<number, StreamState>();
@@ -23,10 +35,16 @@ export class IcecastManager {
     private readonly audioEnvironment: NodeJS.ProcessEnv,
   ) {}
 
-  async proxy(requestPath: string, response: ServerResponse): Promise<void> {
+  async proxy(
+    requestPath: string,
+    response: ServerResponse,
+    method = "GET",
+  ): Promise<void> {
     const match = /^\/spotify-(\d+)\.opus$/.exec(requestPath);
     if (!match) {
-      response.writeHead(404).end();
+      response
+        .writeHead(404, { "Content-Type": "text/plain; charset=utf-8" })
+        .end("Not found");
       return;
     }
 
@@ -36,40 +54,124 @@ export class IcecastManager {
       return;
     }
     const bitrate = clampBitrate(requestedBitrate);
-    const state = await this.ensureStream(bitrate);
-    state.clients += 1;
-    if (state.idleTimer) clearTimeout(state.idleTimer);
 
-    const upstream = request({
-      host: "127.0.0.1",
-      port: 8000,
-      path: `/spotify-${bitrate}.opus`,
-      method: "GET",
-      headers: { Host: "127.0.0.1:8000", "Cache-Control": "no-cache" },
-    }, (sourceResponse) => {
-      response.writeHead(sourceResponse.statusCode ?? 502, sourceResponse.headers);
-      sourceResponse.pipe(response);
+    // Players (and every browser preflight) probe with HEAD before opening a
+    // stream. Answering 404 here made on-demand mounts look broken, so report
+    // the mount without starting the encoder.
+    if (method === "HEAD") {
+      response.writeHead(200, { ...MOUNT_HEADERS, "Content-Type": "audio/ogg" }).end();
+      return;
+    }
+
+    let state: StreamState;
+    let upstream: IncomingMessage;
+    try {
+      ({ state, upstream } = await this.open(bitrate));
+    } catch (error) {
+      response
+        .writeHead(503, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          Connection: "close",
+        })
+        .end(
+          `Stream unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      return;
+    }
+
+    state.clients += 1;
+    if (state.idleTimer) {
+      clearTimeout(state.idleTimer);
+      state.idleTimer = undefined;
+    }
+
+    response.writeHead(200, {
+      ...MOUNT_HEADERS,
+      "Content-Type": upstream.headers["content-type"] ?? "audio/ogg",
     });
+    response.socket?.setNoDelay?.(true);
+
     const release = () => {
       if (state.clients > 0) state.clients -= 1;
       if (state.clients === 0) this.scheduleIdleStop(state);
     };
-    upstream.once("error", (error) => {
-      if (!response.headersSent) response.writeHead(502);
-      response.end(`Icecast unavailable: ${error.message}`);
+    upstream.once("error", () => {
+      if (!response.writableEnded) response.destroy();
       release();
     });
+    upstream.pipe(response);
     response.once("close", () => {
       upstream.destroy();
       release();
     });
-    upstream.end();
+  }
+
+  // The encoder and the mount can disappear under us (source timeout, ffmpeg
+  // restart, icecast restarting between requests). Retry the whole open before
+  // handing a 404/503 to the player.
+  private async open(
+    bitrate: number,
+  ): Promise<{ state: StreamState; upstream: IncomingMessage }> {
+    let lastError = new Error("Icecast did not start the stream");
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      let state: StreamState | undefined;
+      try {
+        state = await this.ensureStream(bitrate);
+        const upstream = await this.connectMount(bitrate);
+        if ((upstream.statusCode ?? 0) === 200) return { state, upstream };
+        lastError = new Error(
+          `Icecast responded with ${upstream.statusCode ?? "no status"}`,
+        );
+        upstream.resume();
+        upstream.destroy();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+      if (state && state.clients === 0) {
+        state.process.stop();
+        this.streams.delete(state.bitrate);
+      }
+      await sleep(250);
+    }
+    throw lastError;
+  }
+
+  private connectMount(bitrate: number): Promise<IncomingMessage> {
+    return new Promise((resolve, reject) => {
+      const upstream = request(
+        {
+          host: "127.0.0.1",
+          port: 8000,
+          path: `/spotify-${bitrate}.opus`,
+          method: "GET",
+          headers: {
+            Host: "127.0.0.1:8000",
+            "Cache-Control": "no-cache",
+            "Icy-MetaData": "0",
+          },
+        },
+        (sourceResponse) => {
+          upstream.setTimeout(0);
+          resolve(sourceResponse);
+        },
+      );
+      upstream.setTimeout(5000, () =>
+        upstream.destroy(new Error("Icecast did not respond")),
+      );
+      upstream.once("error", reject);
+      upstream.end();
+    });
   }
 
   async close(): Promise<void> {
-    for (const state of this.streams.values()) state.process.stop();
+    for (const state of this.streams.values()) {
+      if (state.idleTimer) clearTimeout(state.idleTimer);
+      state.process.stop();
+    }
     this.streams.clear();
     this.server?.stop();
+    this.server = undefined;
     await unlink(`${this.config.runtimeDir}/icecast.xml`).catch(() => undefined);
   }
 

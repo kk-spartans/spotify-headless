@@ -4,6 +4,7 @@ import { authUrlPath } from "./config.js";
 import { prepareFiles, writeMediaMtxConfig, writePulseConfig } from "./config-files.js";
 import { IcecastManager } from "./icecast.js";
 import { clickLogin } from "./login.js";
+import { LiveStreamManager } from "./live.js";
 import { ManagedProcess, sleep, waitForCommand, waitForFile, waitForPort } from "./process.js";
 import { createWebServer } from "./web.js";
 import { SPOTIFY_GROUP_ID, SPOTIFY_USER_ID } from "./config.js";
@@ -65,7 +66,8 @@ async function start(): Promise<void> {
   spotify.start(true);
 
   const icecast = new IcecastManager(config, childEnvironment);
-  const web = createWebServer({ config, icecast, environment: childEnvironment, ready: () => ready });
+  const live = new LiveStreamManager(childEnvironment);
+  const web = createWebServer({ config, live, icecast, environment: childEnvironment, ready: () => ready });
   web.listen(8080, "0.0.0.0");
   await waitForPort("127.0.0.1", 8080);
   ready = true;
@@ -104,6 +106,7 @@ async function start(): Promise<void> {
     shuttingDown = true;
     ready = false;
     web.close();
+    live.close();
     await icecast.close();
     for (const process of processes.reverse()) process.stop();
   };

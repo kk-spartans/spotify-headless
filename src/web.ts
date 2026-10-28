@@ -11,10 +11,12 @@ import type { Config } from "./config.js";
 import { authUrlPath } from "./config.js";
 import { IcecastManager } from "./icecast.js";
 import { clickLogin } from "./login.js";
+import { LiveStreamManager, parseLivePath } from "./live.js";
 
 type RuntimeApi = {
   config: Config;
   icecast: IcecastManager;
+  live: LiveStreamManager;
   environment: NodeJS.ProcessEnv;
   ready: () => boolean;
 };
@@ -329,7 +331,10 @@ export function createWebServer(api: RuntimeApi): Server {
   // probably parked on the post-click waiting screen, so the next attempt
   // resets it to a pristine first-run screen before clicking.
   let needsReset = false;
-  const server = createServer(async (request, response) => {
+  const handleRequest = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> => {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname === "/" && request.method === "GET") {
       response.writeHead(200, {
@@ -485,17 +490,46 @@ export function createWebServer(api: RuntimeApi): Server {
       proxyWebrtc(request, response);
       return;
     }
+    // Players like to add a trailing slash; don't turn that into a 404.
+    const streamPath = url.pathname.replace(/\/+$/, "");
+    const live = parseLivePath(streamPath);
+    if (live && (request.method === "GET" || request.method === "HEAD")) {
+      const forwardedProto = String(request.headers["x-forwarded-proto"] ?? "http")
+        .split(",")[0]
+        .trim();
+      const protocol = forwardedProto === "https" ? "https" : "http";
+      const host = request.headers.host ?? "localhost:8080";
+      api.live.serve(request, response, live, `${protocol}://${host}`);
+      return;
+    }
     if (
-      url.pathname.startsWith("/spotify-") &&
-      url.pathname.endsWith(".opus") &&
-      request.method === "GET"
+      streamPath.startsWith("/spotify-") &&
+      streamPath.endsWith(".opus") &&
+      (request.method === "GET" || request.method === "HEAD")
     ) {
-      await api.icecast.proxy(url.pathname, response);
+      await api.icecast.proxy(streamPath, response, request.method);
       return;
     }
     response
       .writeHead(404, { "Content-Type": "text/plain; charset=utf-8" })
       .end("Not found");
+  };
+
+  const server = createServer((request, response) => {
+    // A rejected promise used to leave the socket hanging (and could take the
+    // process down with it). Every route gets an answer now.
+    void handleRequest(request, response).catch((error) => {
+      console.error(
+        `[web] ${error instanceof Error ? error.message : String(error)}`,
+      );
+      if (response.headersSent) {
+        response.destroy();
+        return;
+      }
+      response
+        .writeHead(500, { "Content-Type": "text/plain; charset=utf-8" })
+        .end("Internal error");
+    });
   });
   server.on("upgrade", (request, socket, head) => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
